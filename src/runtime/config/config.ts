@@ -18,6 +18,7 @@ import {
   type CommandShellRuntime,
 } from "../shell/command-shell-runtime.js";
 import {
+  DEFAULT_HTTP_MAX_REQUEST_BYTES,
   DEFAULT_INSTRUCTION_NAMES,
   DEFAULT_SKILL_PATHS,
   generalConfigDefinition,
@@ -58,6 +59,7 @@ export interface ServerConfig {
   configDir: string;
   host: string;
   port: number;
+  httpMaxRequestBytes: number;
   oauth: OAuthConfig;
   allowedRoots: string[];
   allowedHosts: string[];
@@ -443,6 +445,7 @@ export function loadConfig(
     configDir: files.dir,
     host,
     port,
+    httpMaxRequestBytes: config.httpMaxRequestBytes ?? DEFAULT_HTTP_MAX_REQUEST_BYTES,
     oauth: parseOAuthConfig(env, files.auth.ownerToken),
     allowedRoots: parseAllowedRoots(config.allowedRoots),
     allowedHosts: parseAllowedHosts(config.allowedHosts, derivedAllowedHosts),
@@ -574,6 +577,7 @@ function restartRequiredGeneralValues(
   return {
     host,
     port,
+    httpMaxRequestBytes: configured.httpMaxRequestBytes ?? DEFAULT_HTTP_MAX_REQUEST_BYTES,
     allowedRoots: parseAllowedRoots(configured.allowedRoots),
     publicBaseUrl: publicDeployment.baseUrls,
     allowedHosts: parseAllowedHosts(configured.allowedHosts, derivedAllowedHosts),

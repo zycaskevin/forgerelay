@@ -45,6 +45,26 @@
         "env": "PORT"
       }
     },
+    "httpMaxRequestBytes": {
+      "description": "Maximum inbound JSON HTTP request bytes, including MCP requests.",
+      "type": "integer",
+      "minimum": 1,
+      "maximum": 67108864,
+      "default": 8388608,
+      "x-forgerelay-scopes": [
+        "runtime",
+        "user",
+        "built-in"
+      ],
+      "x-forgerelay-merge": "replace",
+      "x-forgerelay-reload": "restart-required",
+      "x-forgerelay-sensitivity": "public",
+      "x-forgerelay-interpolation": "none",
+      "x-forgerelay-execution-effect": "none",
+      "x-forgerelay-runtime-override": {
+        "env": "FORGERELAY_HTTP_MAX_REQUEST_BYTES"
+      }
+    },
     "allowedRoots": {
       "description": "Filesystem roots that Workspaces may open.",
       "type": "array",

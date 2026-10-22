@@ -20,7 +20,7 @@ import {
   toNodeHandler,
   toWebRequest,
 } from "@modelcontextprotocol/node";
-import express from "express";
+import express, { type ErrorRequestHandler } from "express";
 import { ActivityAuditStore } from "../../../activity/history/audit-store.js";
 import { BashOutputStore } from "../../../activity/history/bash-output-store.js";
 import { HostTurnStore } from "../../../activity/history/host-turn-store.js";
@@ -96,12 +96,6 @@ export function createHttpServer(
     ...routeBaseUrls.map((baseUrl) => baseUrl.hostname),
   ]));
   const app = express();
-  app.use(express.json());
-  if (allowedHosts) {
-    app.use(hostHeaderValidation(allowedHosts));
-  } else if (["127.0.0.1", "localhost", "::1"].includes(config.host)) {
-    app.use(localhostHostValidation());
-  }
   const transports = new McpTransportRegistry<Transport>({
     maxTransports: MAX_MCP_TRANSPORT_SESSIONS,
   });
@@ -260,6 +254,7 @@ export function createHttpServer(
     const requestId = randomUUID();
     const startedAt = performance.now();
     res.locals.requestId = requestId;
+    res.setHeader("x-forgerelay-request-id", requestId);
 
     res.on("finish", () => {
       const path = requestPath(req);
@@ -269,15 +264,42 @@ export function createHttpServer(
       logEvent(config.logging, "info", "http_request", {
         requestId,
         method: req.method,
-        path,
+        path: res.locals.bodyTooLarge ? path.slice(0, 256) : path,
         status: res.statusCode,
         durationMs: Math.round(performance.now() - startedAt),
-        ...requestLogFields(req),
+        ...(res.locals.bodyTooLarge
+          ? { contentLength: req.header("content-length")?.slice(0, 32) }
+          : requestLogFields(req)),
       });
     });
 
     next();
   });
+
+  app.use(express.json({ limit: config.httpMaxRequestBytes }));
+  const bodySizeErrorHandler: ErrorRequestHandler = (error, req, res, next) => {
+    if (error?.type !== "entity.too.large" || error?.status !== 413) {
+      next(error);
+      return;
+    }
+    res.locals.bodyTooLarge = true;
+    // Do not serialize parser errors: they can retain request bodies. Only
+    // bounded transport metadata belongs in this pre-authentication event.
+    logEvent(config.logging, "warn", "http_request_body_too_large", {
+      requestId: res.locals.requestId,
+      method: req.method.slice(0, 32),
+      path: requestPath(req).slice(0, 256),
+      contentLength: req.header("content-length")?.slice(0, 32),
+      limitBytes: config.httpMaxRequestBytes,
+    });
+    sendJsonRpcError(res, 413, -32000, "JSON request body exceeds the configured byte limit");
+  };
+  app.use(bodySizeErrorHandler);
+  if (allowedHosts) {
+    app.use(hostHeaderValidation(allowedHosts));
+  } else if (["127.0.0.1", "localhost", "::1"].includes(config.host)) {
+    app.use(localhostHostValidation());
+  }
 
   // MCP App assets are intentionally public, cross-origin resources. ChatGPT
   // renders an app on a dedicated `*.web-sandbox.oaiusercontent.com` origin,

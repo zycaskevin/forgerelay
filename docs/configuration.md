@@ -75,6 +75,28 @@ Override the directory with:
 FORGERELAY_CONFIG_DIR=/path/to/config npx @akira-tl/forgerelay serve
 ```
 
+## Inbound JSON HTTP request limit
+
+Set `httpMaxRequestBytes` in the user `config.json`, for example:
+
+```json
+{ "httpMaxRequestBytes": 8388608 }
+```
+
+The default is 8 MiB (8,388,608 bytes). Values must be integers from 1 through
+67,108,864 bytes (64 MiB). `FORGERELAY_HTTP_MAX_REQUEST_BYTES` overrides the
+persisted value at runtime; changing either source requires a server restart.
+This limit applies to JSON HTTP bodies, including MCP tool arguments, and to
+the decompressed size of compressed JSON bodies. It is separate from outbound
+media and downloaded Artifact limits.
+
+Every request receives an `x-forgerelay-request-id` response header before body
+parsing. Oversized JSON returns HTTP 413 with a bounded JSON-RPC error (`id: null`)
+before authentication. The `http_request_body_too_large` warning records the
+request ID, bounded method/path/Content-Length, and configured limit, without
+request bodies, tool arguments, Authorization headers, or other client headers.
+Normal request logging remains controlled by the existing logging settings.
+
 ## Commands
 
 ```bash
@@ -106,6 +128,7 @@ The public environment-variable prefix is `FORGERELAY_*`.
 | `PORT` | Local port. Defaults to `7676`. |
 | `FORGERELAY_ALLOWED_ROOTS` | Comma-separated roots that workspaces may open. |
 | `FORGERELAY_PUBLIC_BASE_URL` | One public base URL or a comma-separated list. Each URL may include its own routed path prefix; the first URL is canonical. All configured hostnames are added to the derived Host-header allowlist. |
+| `FORGERELAY_HTTP_MAX_REQUEST_BYTES` | Maximum inbound JSON HTTP request bytes, including MCP. Default `8388608` (8 MiB); integer range `1`–`67108864` (64 MiB). Restart required. |
 | `FORGERELAY_ALLOWED_HOSTS` | Optional Host-header allowlist override. |
 | `FORGERELAY_OAUTH_OWNER_TOKEN` | Owner password. Must be at least 16 characters. |
 | `FORGERELAY_STATE_DIR` | SQLite state directory. New default: `~/.local/share/forgerelay`. |

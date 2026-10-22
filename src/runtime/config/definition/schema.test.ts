@@ -58,6 +58,13 @@ test("generated scope schemas carry strict structure, defaults, descriptions, an
   assert.match(String(schema.$id), /\/schemas\/v1\/config\.user\.schema\.json$/);
 
   const properties = schema.properties as Record<string, Record<string, unknown>>;
+  assert.equal(properties.httpMaxRequestBytes?.default, 8 * 1024 * 1024);
+  assert.equal(properties.httpMaxRequestBytes?.minimum, 1);
+  assert.equal(properties.httpMaxRequestBytes?.maximum, 64 * 1024 * 1024);
+  assert.equal(properties.httpMaxRequestBytes?.["x-forgerelay-reload"], "restart-required");
+  assert.deepEqual(properties.httpMaxRequestBytes?.["x-forgerelay-runtime-override"], {
+    env: "FORGERELAY_HTTP_MAX_REQUEST_BYTES",
+  });
   assert.equal(properties.port?.default, 7676);
   assert.equal(properties.port?.description, "Local listening port (1-65535).");
   assert.equal(properties.port?.minimum, 1);

@@ -7,6 +7,9 @@ const USER_RUNTIME_SCOPES = ["runtime", "user", "built-in"] as const;
 const CONTEXT_SOURCE_SCOPES = ["runtime", "project-local", "project", "user", "built-in"] as const;
 const USER_SCOPES = ["user", "built-in"] as const;
 
+export const DEFAULT_HTTP_MAX_REQUEST_BYTES = 8 * 1024 * 1024;
+export const MAX_HTTP_REQUEST_BYTES = 64 * 1024 * 1024;
+
 export const DEFAULT_SYSTEM_INSTRUCTIONS_PATH = "~/.agents/AGENTS.md";
 export const DEFAULT_INSTRUCTION_NAMES = ["AGENTS.md"] as const;
 export const DEFAULT_SKILL_PATHS = ["~/.agents/skills", "./.agents/skills"] as const;
@@ -53,6 +56,12 @@ export const generalConfigDefinition = defineConfigDomain({
         ),
       },
     ),
+    httpMaxRequestBytes: field(z.number().int().min(1).max(MAX_HTTP_REQUEST_BYTES), "Maximum inbound JSON HTTP request bytes, including MCP requests.", {
+      scopes: USER_RUNTIME_SCOPES,
+      builtIn: literal(DEFAULT_HTTP_MAX_REQUEST_BYTES),
+      reload: "restart-required",
+      runtimeOverride: runtimeEnv("FORGERELAY_HTTP_MAX_REQUEST_BYTES", (env) => readIntegerEnv(env, "FORGERELAY_HTTP_MAX_REQUEST_BYTES", 1, MAX_HTTP_REQUEST_BYTES)),
+    }),
     allowedRoots: field(z.array(z.string()), "Filesystem roots that Workspaces may open.", {
       scopes: USER_RUNTIME_SCOPES,
       builtIn: computed("The process working directory when no roots are configured."),

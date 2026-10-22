@@ -32,6 +32,7 @@ export interface ForgeRelayUserConfig {
   $schema?: string;
   host?: string;
   port?: number;
+  httpMaxRequestBytes?: number;
   allowedRoots?: string[];
   publicBaseUrl?: string | string[] | null;
   allowedHosts?: string[];

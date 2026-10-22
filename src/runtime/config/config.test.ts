@@ -609,3 +609,27 @@ assert.equal(
   JSON.parse(readFileSync(forgerelayConfigPath(explicitDefaultEnv), "utf8")).port,
   7676,
 );
+
+// Inbound HTTP byte limits use the canonical persisted/runtime config path.
+assert.equal(loadConfig(baseEnv).httpMaxRequestBytes, 8 * 1024 * 1024);
+const httpConfigDir = mkdtempSync(join(tmpdir(), "forgerelay-http-limit-config-test-"));
+const httpEnv = { ...baseEnv, FORGERELAY_CONFIG_DIR: httpConfigDir };
+writeForgeRelayConfig({ httpMaxRequestBytes: 128 * 1024 }, httpEnv);
+assert.equal(JSON.parse(readFileSync(forgerelayConfigPath(httpEnv), "utf8")).httpMaxRequestBytes, 128 * 1024);
+const httpRuntime = loadConfig(httpEnv);
+assert.equal(httpRuntime.httpMaxRequestBytes, 128 * 1024);
+assert.equal(loadConfig({ ...httpEnv, FORGERELAY_HTTP_MAX_REQUEST_BYTES: "262144" }).httpMaxRequestBytes, 262144);
+assert.equal(loadConfig({ ...httpEnv, FORGERELAY_HTTP_MAX_REQUEST_BYTES: "67108864" }).httpMaxRequestBytes, 64 * 1024 * 1024);
+for (const value of [0, -1, 1.5, 64 * 1024 * 1024 + 1, Infinity]) {
+  assert.throws(() => writeForgeRelayConfig({ httpMaxRequestBytes: value }, httpEnv));
+  assert.throws(() => loadConfig({ ...httpEnv, FORGERELAY_HTTP_MAX_REQUEST_BYTES: String(value) }));
+}
+writeForgeRelayConfig({ httpMaxRequestBytes: 256 * 1024 }, httpEnv);
+const httpChanged = liveGeneralConfigState(httpRuntime);
+assert.deepEqual(httpChanged.applied.fields.httpMaxRequestBytes, {
+  logicalPath: "config.httpMaxRequestBytes",
+  configuredValue: 256 * 1024,
+  appliedValue: 128 * 1024,
+  restartRequired: true,
+});
+assert.equal(httpRuntime.httpMaxRequestBytes, 128 * 1024);
