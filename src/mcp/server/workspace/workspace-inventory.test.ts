@@ -59,6 +59,61 @@ const canonicalToolNames = [
   "bash",
 ] as const;
 
+test("persisted non-Git checkouts close, reopen with the same identity, and delete under localized Git failures", {
+  skip: process.platform === "win32",
+}, async (t) => {
+  const context = await fixture(t);
+  const bin = join(dirname(context.project), "localized-git");
+  await mkdir(bin);
+  await writeFile(join(bin, "git"), [
+    "#!/bin/sh",
+    "if [ \"${LC_ALL:-}\" = C ]; then",
+    "  printf 'fatal: not a git repository\\n' >&2",
+    "else",
+    "  printf '致命錯誤：不是一個 git 版本庫\\n' >&2",
+    "fi",
+    "exit 128",
+    "",
+  ].join("\n"), { mode: 0o755 });
+  const roots: string[] = [];
+  for (let index = 0; index < 4; index += 1) {
+    const root = join(context.project, `plain-${index}`);
+    await mkdir(root);
+    await writeFile(join(root, "keep.txt"), "project files survive\n");
+    context.store.createSession({ id: `ws_000000000${index}`, root, mode: "checkout", managed: false });
+    roots.push(root);
+  }
+  const previousPath = process.env.PATH;
+  const previousLcAll = process.env.LC_ALL;
+  const previousLang = process.env.LANG;
+  process.env.PATH = `${bin}:${previousPath ?? ""}`;
+  process.env.LC_ALL = "zh_TW.UTF-8";
+  process.env.LANG = "zh_TW.UTF-8";
+  try {
+    for (const [index, root] of roots.entries()) {
+      const workspaceId = `ws_000000000${index}`;
+      const closed = await context.client.callTool({ name: "close_workspace", arguments: { workspaceId } });
+      assert.equal(closed.isError, undefined, allResponseText(closed));
+      assert.equal(context.store.getSession(workspaceId)?.status, "closed");
+      const reopened = await callOpen(context.client, root, `plain-chat-${index}`, "checkout");
+      assert.equal(reopened.isError, undefined, allResponseText(reopened));
+      assert.equal(structuredContent(reopened).workspaceId, workspaceId);
+      assert.equal(context.store.getSession(workspaceId)?.status, "active");
+      const deleted = await context.client.callTool({ name: "close_workspace", arguments: { workspaceId, action: "delete" } });
+      assert.equal(deleted.isError, undefined, allResponseText(deleted));
+      assert.equal(context.store.getSession(workspaceId), undefined);
+      assert.equal(await readFile(join(root, "keep.txt"), "utf8"), "project files survive\n");
+    }
+  } finally {
+    if (previousPath === undefined) delete process.env.PATH;
+    else process.env.PATH = previousPath;
+    if (previousLcAll === undefined) delete process.env.LC_ALL;
+    else process.env.LC_ALL = previousLcAll;
+    if (previousLang === undefined) delete process.env.LANG;
+    else process.env.LANG = previousLang;
+  }
+});
+
 test("Composite close preserves identity and members while delete dissolves only Composite state", async (t) => {
   const context = await fixture(t);
   await writeFile(join(context.project, "preserved.txt"), "preserved-member\n");

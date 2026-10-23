@@ -137,6 +137,91 @@ test("Git workspaces fail closed instead of changing identity class when Git bec
   }
 });
 
+test("non-Git resolution pins Git diagnostics to the C locale", {
+  skip: process.platform === "win32",
+}, async (t) => {
+  const root = await mkdtemp(join(tmpdir(), "forgerelay-project-git-locale-"));
+  t.after(() => rm(root, { recursive: true, force: true }));
+  const project = join(root, "project");
+  const bin = join(root, "bin");
+  const localeLog = join(root, "git-locale.log");
+  await mkdir(project);
+  await mkdir(bin);
+  await writeFile(join(bin, "git"), [
+    "#!/bin/sh",
+    "printf '%s\\n' \"${LC_ALL:-unset}\" >> \"$GIT_LOCALE_MARKER\"",
+    "if [ \"${LC_ALL:-}\" = C ]; then",
+    "  printf 'fatal: not a git repository\\n' >&2",
+    "else",
+    "  printf '致命錯誤：不是一個 git 版本庫\\n' >&2",
+    "fi",
+    "exit 128",
+    "",
+  ].join("\n"), { mode: 0o755 });
+  const resolver = new ProjectContextResolver(join(root, "config"), {
+    ...process.env,
+    PATH: bin,
+    GIT_DIR: undefined,
+    GIT_WORK_TREE: undefined,
+    GIT_LOCALE_MARKER: localeLog,
+    LC_ALL: "zh_TW.UTF-8",
+    LANG: "zh_TW.UTF-8",
+  });
+  assert.equal((await resolver.inspect(project)).kind, "non-git");
+  const resolved = await resolver.resolve(project);
+  assert.equal(resolved.kind, "non-git");
+  assert.equal((await resolver.inspect(project)).id, resolved.id);
+  const locales = (await readFile(localeLog, "utf8")).trim().split(/\r?\n/);
+  assert.ok(locales.length > 0);
+  assert.equal(locales.every((locale) => locale === "C"), true);
+});
+
+test("recognized but corrupt Git metadata fails closed instead of creating a non-Git identity", async (t) => {
+  const root = await mkdtemp(join(tmpdir(), "forgerelay-project-corrupt-git-"));
+  t.after(() => rm(root, { recursive: true, force: true }));
+  const resolver = new ProjectContextResolver(join(root, "config"));
+  for (const kind of ["directory", "gitfile", "malformed-gitfile", "blank-gitfile"]) {
+    const project = join(root, kind);
+    const nested = join(project, "nested");
+    await mkdir(nested, { recursive: true });
+    if (kind === "directory") {
+      await mkdir(join(project, ".git"));
+      await writeFile(join(project, ".git", "HEAD"), "ref: refs/heads/main\n");
+    } else if (kind === "gitfile") {
+      await writeFile(join(project, ".git"), "gitdir: missing-metadata\n");
+    } else if (kind === "malformed-gitfile") {
+      await writeFile(join(project, ".git"), "not-a-gitdir\n");
+    } else {
+      await writeFile(join(project, ".git"), "\n");
+    }
+    await assert.rejects(() => resolver.inspect(project));
+    await assert.rejects(() => resolver.resolve(project));
+  }
+  await assert.rejects(() => readFile(join(root, "config", "projects", "non-git-identities.json")), { code: "ENOENT" });
+});
+
+test("explicit GIT_DIR and GIT_WORK_TREE remain authoritative without a .git ancestor", async (t) => {
+  const root = await mkdtemp(join(tmpdir(), "forgerelay-project-explicit-git-env-"));
+  t.after(() => rm(root, { recursive: true, force: true }));
+  const repository = join(root, "repository");
+  const workTree = join(root, "external-work-tree");
+  await createGitProject(repository);
+  await mkdir(workTree);
+
+  const resolver = new ProjectContextResolver(join(root, "config"), {
+    ...process.env,
+    GIT_DIR: join(repository, ".git"),
+    GIT_WORK_TREE: workTree,
+  });
+  const inspected = await resolver.inspect(workTree);
+  assert.equal(inspected.kind, "git");
+  assert.equal(inspected.projectRoot, await realpath(workTree));
+  const resolved = await resolver.resolve(workTree);
+  assert.equal(resolved.kind, "git");
+  assert.equal(resolved.projectRoot, await realpath(workTree));
+  assert.equal(resolved.gitCommonDir, await realpath(join(repository, ".git")));
+});
+
 test("recloning a Git project at the same path produces a new Project ID", async (t) => {
   const root = await mkdtemp(join(tmpdir(), "forgerelay-project-identity-reclone-"));
   const configDir = join(root, "config");

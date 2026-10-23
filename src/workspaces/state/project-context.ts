@@ -1,6 +1,6 @@
 import { randomBytes } from "node:crypto";
 import { execFile } from "node:child_process";
-import { mkdir, readFile, realpath, rename, rm, stat, writeFile } from "node:fs/promises";
+import { lstat, mkdir, readFile, realpath, rename, rm, stat, writeFile } from "node:fs/promises";
 import { isAbsolute, join, resolve } from "node:path";
 import { promisify } from "node:util";
 import { withFileLock } from "../../runtime/state/lock/file-lock.js";
@@ -56,14 +56,14 @@ export class ProjectContextResolver {
   private readonly configDir: string;
   private readonly projectsDir: string;
 
-  constructor(configDir: string) {
+  constructor(configDir: string, private readonly env: NodeJS.ProcessEnv = process.env) {
     this.configDir = resolve(configDir);
     this.projectsDir = join(this.configDir, "projects");
   }
 
   async inspect(workspaceRoot: string): Promise<ProjectInspectionContext> {
     const canonicalWorkspaceRoot = await realpath(workspaceRoot);
-    const git = await resolveGitProject(canonicalWorkspaceRoot);
+    const git = await resolveGitProject(canonicalWorkspaceRoot, this.env);
     if (git) {
       const id = await readProjectId(join(git.gitCommonDir, GIT_PROJECT_STATE_DIR, GIT_PROJECT_ID_FILE));
       return {
@@ -90,7 +90,7 @@ export class ProjectContextResolver {
 
   async resolve(workspaceRoot: string): Promise<ProjectContext> {
     const canonicalWorkspaceRoot = await realpath(workspaceRoot);
-    const git = await resolveGitProject(canonicalWorkspaceRoot);
+    const git = await resolveGitProject(canonicalWorkspaceRoot, this.env);
     if (git) {
       const id = await resolveGitProjectId(git.gitCommonDir);
       return {
@@ -132,11 +132,18 @@ export class ProjectContextResolver {
   }
 }
 
-async function resolveGitProject(workspaceRoot: string): Promise<GitProjectLocation | undefined> {
+async function resolveGitProject(
+  workspaceRoot: string,
+  env: NodeJS.ProcessEnv = process.env,
+): Promise<GitProjectLocation | undefined> {
+  // Keep Git authoritative for repository discovery, including explicit
+  // GIT_DIR/GIT_WORK_TREE selection, while making the non-repository diagnostic
+  // deterministic instead of depending on the user's locale.
+  const gitEnv = { ...env, LC_ALL: "C", LANG: "C" };
   try {
     const [{ stdout: rootOutput }, { stdout: commonDirOutput }] = await Promise.all([
-      execFileAsync("git", ["rev-parse", "--show-toplevel"], { cwd: workspaceRoot }),
-      execFileAsync("git", ["rev-parse", "--git-common-dir"], { cwd: workspaceRoot }),
+      execFileAsync("git", ["rev-parse", "--show-toplevel"], { cwd: workspaceRoot, env: gitEnv }),
+      execFileAsync("git", ["rev-parse", "--git-common-dir"], { cwd: workspaceRoot, env: gitEnv }),
     ]);
     const rawProjectRoot = rootOutput.trim();
     const rawCommonDir = commonDirOutput.trim();
@@ -148,14 +155,17 @@ async function resolveGitProject(workspaceRoot: string): Promise<GitProjectLocat
     return { projectRoot, gitCommonDir };
   } catch (error) {
     if (isErrno(error, "ENOENT")) {
-      if (await hasGitMetadataAncestor(workspaceRoot)) {
+      if (hasExplicitGitEnvironment(env) || await hasGitMetadataEvidence(workspaceRoot)) {
         throw new Error(
           `Git is required to resolve canonical ForgeRelay Project identity for Git workspace ${workspaceRoot}.`,
         );
       }
       return undefined;
     }
-    if (isGitRepositoryMiss(error)) return undefined;
+    if (isGitRepositoryMiss(error)) {
+      if (hasExplicitGitEnvironment(env) || await hasGitMetadataEvidence(workspaceRoot)) throw error;
+      return undefined;
+    }
     throw error;
   }
 }
@@ -237,17 +247,38 @@ function newProjectId(): string {
   return `proj_${randomBytes(10).toString("hex")}`;
 }
 
-async function hasGitMetadataAncestor(workspaceRoot: string): Promise<boolean> {
-  let current = workspaceRoot;
+function hasExplicitGitEnvironment(env: NodeJS.ProcessEnv): boolean {
+  return env.GIT_DIR !== undefined || env.GIT_WORK_TREE !== undefined;
+}
+
+async function hasGitMetadataEvidence(workspaceRoot: string): Promise<boolean> {
+  // A .git entry on the requested workspace root is authoritative evidence even
+  // when malformed; Git must reject it rather than ForgeRelay silently changing
+  // the Project identity class. For higher ancestors, only recognized Git metadata
+  // counts so an unrelated stale directory such as /tmp/.git cannot poison every
+  // descendant non-Git workspace.
+  if (await pathEntryExists(join(workspaceRoot, ".git"))) return true;
+
+  let current = resolve(workspaceRoot, "..");
   for (;;) {
-    if (await isGitMetadataMarker(join(current, ".git"))) return true;
+    if (await isRecognizedGitMetadataMarker(join(current, ".git"))) return true;
     const parent = resolve(current, "..");
     if (parent === current) return false;
     current = parent;
   }
 }
 
-async function isGitMetadataMarker(path: string): Promise<boolean> {
+async function pathEntryExists(path: string): Promise<boolean> {
+  try {
+    await lstat(path);
+    return true;
+  } catch (error) {
+    if (isErrno(error, "ENOENT")) return false;
+    throw error;
+  }
+}
+
+async function isRecognizedGitMetadataMarker(path: string): Promise<boolean> {
   let metadata;
   try {
     metadata = await stat(path);
