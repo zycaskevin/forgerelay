@@ -8,6 +8,7 @@ export interface ExternalCommandRequest {
   env?: NodeJS.ProcessEnv;
   signal?: AbortSignal;
   stdin?: string;
+  timeoutMs?: number;
   label: string;
 }
 
@@ -43,10 +44,24 @@ export const runExternalCommand: ExternalCommandRunner = async (
   });
 
   const detachAbort = terminateChildOnAbort(child, request.signal);
+  const timeoutMs = request.timeoutMs ?? 600_000;
+  let timedOut = false;
+  const timeout = setTimeout(() => {
+    timedOut = true;
+    child.kill();
+  }, timeoutMs);
+  timeout.unref();
+
+  child.stdin.end(request.stdin ?? "", "utf8");
+
   try {
     const exitCode = await new Promise<number>((resolve, reject) => {
       child.once("error", (error) => reject(error));
       child.once("exit", (code, signal) => {
+        if (timedOut) {
+          reject(new Error(`${request.label} command timed out after ${timeoutMs}ms.`));
+          return;
+        }
         if (request.signal?.aborted) {
           const aborted = new Error(`${request.label} command cancelled.`);
           aborted.name = "AbortError";
@@ -75,6 +90,7 @@ export const runExternalCommand: ExternalCommandRunner = async (
     }
     throw error;
   } finally {
+    clearTimeout(timeout);
     detachAbort();
     if (!child.killed && child.exitCode === null) child.kill();
   }

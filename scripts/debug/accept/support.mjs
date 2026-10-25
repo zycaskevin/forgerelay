@@ -3,7 +3,7 @@ import { spawnSync } from "node:child_process";
 import { createHash, randomBytes, randomUUID } from "node:crypto";
 import { once } from "node:events";
 import { connect } from "node:net";
-import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
+import { chmodSync, existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { setTimeout as delay } from "node:timers/promises";
 import { debugBaseUrl, debugMcpUrl, repoRoot } from "../runtime.mjs";
@@ -328,7 +328,7 @@ export function exerciseSubagentHooks(runtimeEnv, debugStateDir, workspaceId, wo
     'const record = store.create({',
     `  workspaceId: ${JSON.stringify(workspaceId)},`,
     `  workspaceRoot: ${JSON.stringify(workspaceRoot)},`,
-    '  profileName: "debug-missing-profile",',
+    '  profileName: "debug-codex-fixture",',
     '  provider: "codex",',
     '  activeRun: { id: "run_debug_acceptance", startedAt: new Date().toISOString() },',
     '});',
@@ -346,13 +346,37 @@ export function exerciseSubagentHooks(runtimeEnv, debugStateDir, workspaceId, wo
   const agentId = seeded.stdout.trim();
   assert.match(agentId, /^agt_/);
 
+  const fakeCodex = join(acceptanceRoot, "fake-codex.mjs");
+  writeFileSync(fakeCodex, [
+    "#!/usr/bin/env node",
+    "let prompt = '';",
+    "process.stdin.setEncoding('utf8');",
+    "process.stdin.on('data', (chunk) => { prompt += chunk; });",
+    "process.stdin.on('end', () => {",
+    "  process.stdout.write(JSON.stringify({ type: 'thread.started', thread_id: 'debug-thread' }) + '\\n');",
+    "  process.stdout.write(JSON.stringify({ type: 'item.completed', item: { type: 'agent_message', text: 'fixture:' + prompt.trim() } }) + '\\n');",
+    "  process.stdout.write(JSON.stringify({ type: 'turn.completed', usage: {} }) + '\\n');",
+    "});",
+  ].join("\n") + "\n", "utf8");
+  chmodSync(fakeCodex, 0o755);
+
   const promptFile = join(acceptanceRoot, "subagent-prompt.txt");
-  writeFileSync(promptFile, "debug acceptance prompt that must not reach a provider\n", "utf8");
+  const prompt = "debug acceptance prompt delivered through stdin";
+  writeFileSync(promptFile, prompt + "\n", "utf8");
   const worker = spawnSync(
     process.execPath,
     ["--import", "tsx", "src/cli.ts", "agents", "__worker", agentId, "--prompt-file", promptFile],
-    { cwd: repoRoot, env: runtimeEnv, encoding: "utf8", maxBuffer: 2 * 1024 * 1024 },
+    {
+      cwd: repoRoot,
+      env: { ...runtimeEnv, CODEX_COMMAND: fakeCodex },
+      encoding: "utf8",
+      maxBuffer: 2 * 1024 * 1024,
+      timeout: 15_000,
+    },
   );
+  if (worker.error) {
+    throw new Error(`debug subagent worker failed: ${worker.error.message}`);
+  }
   if (worker.status !== 0) {
     throw new Error(`debug subagent worker failed to execute: ${worker.stderr.trim()}`);
   }
@@ -364,7 +388,7 @@ export function exerciseSubagentHooks(runtimeEnv, debugStateDir, workspaceId, wo
     `const record = store.get(${JSON.stringify(agentId)});`,
     `const deliveries = new SubagentDeliveryMailbox(process.env.FORGERELAY_STATE_DIR).claimSession(${JSON.stringify(workspaceId)}, ${JSON.stringify(agentId)});`,
     'store.close();',
-    'process.stdout.write(JSON.stringify({ status: record?.status, latestRun: record?.latestRun, delivery: deliveries[0] }));',
+    'process.stdout.write(JSON.stringify({ status: record?.status, latestRun: record?.latestRun, providerSessionId: record?.providerSessionId, delivery: deliveries[0] }));',
   ].join("\n");
   const inspected = spawnSync(process.execPath, ["--import", "tsx", "--input-type=module", "-e", inspectScript], {
     cwd: repoRoot,
@@ -376,10 +400,11 @@ export function exerciseSubagentHooks(runtimeEnv, debugStateDir, workspaceId, wo
   }
   const record = JSON.parse(inspected.stdout);
   assert.equal(record.status, "idle");
-  assert.equal(record.latestRun?.status, "failed");
-  assert.equal(record.delivery?.outcome, "failed");
-  assert.match(record.delivery?.error ?? "", /Subagent profile not found/);
-  pass("subagent hook path", `${agentId} stopped in deterministic failed Run without calling a provider`);
+  assert.equal(record.latestRun?.status, "succeeded");
+  assert.equal(record.providerSessionId, "debug-thread");
+  assert.equal(record.delivery?.outcome, "succeeded");
+  assert.equal(record.delivery?.finalResponse, `fixture:${prompt}`);
+  pass("subagent stdin/EOF path", `${agentId} completed with deterministic fake Codex after stdin EOF`);
 }
 
 export function toolText(result) {

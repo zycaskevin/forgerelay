@@ -98,8 +98,16 @@ export async function runBootstrapAcceptance({ server, packageJson, ownerToken, 
     "edit",
     "rename",
     "delete",
+    "inspect",
     "bash",
   ]);
+  const inspectTool = tools.find((tool) => tool.name === "inspect");
+  assert.equal(inspectTool?.annotations?.readOnlyHint, true);
+  assert.equal(inspectTool?.annotations?.destructiveHint, false);
+  assert.equal(inspectTool?.annotations?.idempotentHint, true);
+  assert.equal(inspectTool?.annotations?.openWorldHint, false);
+  assert.equal(inspectTool?.inputSchema?.properties?.command, undefined);
+  assert.equal(inspectTool?.inputSchema?.properties?.argv, undefined);
   const bashTool = tools.find((tool) => tool.name === "bash");
   assert.match(bashTool?.description ?? "", /local user's authority/);
   assert.doesNotMatch(bashTool?.description ?? "", /may modify ordinary project files/);
