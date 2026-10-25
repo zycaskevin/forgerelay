@@ -56,6 +56,7 @@ const canonicalToolNames = [
   "edit",
   "rename",
   "delete",
+  "inspect",
   "bash",
 ] as const;
 
@@ -66,6 +67,7 @@ test("MCP instructions separate capability contract from configurable workflow p
   assert.equal(defaultContext.client.getServerVersion()?.version, packageJson.version);
   assert.deepEqual(defaultTools.tools.map((tool) => tool.name), canonicalToolNames);
   const shellTool = defaultTools.tools.find((tool) => tool.name === "bash");
+  const inspectTool = defaultTools.tools.find((tool) => tool.name === "inspect");
   const activityPanelTool = defaultTools.tools.find((tool) => tool.name === "activity_panel");
   const activityDataTools = ["activity_snapshot", "activity_index", "activity_detail", "activity_output"].map((name) =>
     defaultTools.tools.find((tool) => tool.name === name)
@@ -112,6 +114,9 @@ test("MCP instructions separate capability contract from configurable workflow p
   const shellInputProperties = (shellTool?.inputSchema as {
     properties?: Record<string, { description?: string }>;
   } | undefined)?.properties;
+  const inspectInputProperties = (inspectTool?.inputSchema as {
+    properties?: Record<string, { description?: string; enum?: string[] }>;
+  } | undefined)?.properties;
 
   assert.match(defaultInstructions, /Default to the user's existing checkout/);
   assert.match(defaultInstructions, /Only open mode="worktree" when the user explicitly asks/);
@@ -127,6 +132,17 @@ test("MCP instructions separate capability contract from configurable workflow p
   assert.match(defaultInstructions, /Process exit returns sooner/);
   assert.equal(openWorkspaceTool?.annotations?.readOnlyHint, false);
   assert.equal(openWorkspaceTool?.annotations?.destructiveHint, false);
+  assert.ok(inspectTool);
+  assert.equal(inspectTool?.annotations?.readOnlyHint, true);
+  assert.equal(inspectTool?.annotations?.destructiveHint, false);
+  assert.equal(inspectTool?.annotations?.idempotentHint, true);
+  assert.equal(inspectTool?.annotations?.openWorldHint, false);
+  assert.match(inspectTool?.description ?? "", /Read-only local diagnostics/i);
+  assert.equal(inspectInputProperties?.command, undefined);
+  assert.equal(inspectInputProperties?.argv, undefined);
+  assert.deepEqual(inspectInputProperties?.operation?.enum, [
+    "git.status", "git.diff", "git.log", "process.list", "listener.list", "service.status", "journal.tail", "filesystem.stat",
+  ]);
   assert.match(shellTool?.description ?? "", /local user's authority/);
   assert.doesNotMatch(shellTool?.description ?? "", /may modify ordinary project files/);
   assert.doesNotMatch(shellTool?.description ?? "", /\/etc\/sudoers/);

@@ -32,6 +32,7 @@ import { type CoreOperationContext } from "./mcp/operations/core-operation-execu
 import { ProcessManager } from "./mcp/process/process-sessions.js";
 import { createReviewCheckpointManager } from "./workspaces/review/review-checkpoints.js";
 import { registerProcessTools } from "./mcp/process/tools.js";
+import { registerInspectTools } from "./mcp/inspect/tools.js";
 import { attachCompletedProcessNotices, recordBashCompletion } from "./mcp/process/runtime.js";
 import { CompositeActivityCoordinator } from "./workspaces/composite/composite-activity.js";
 import { CompositeWorkspaceRegistry } from "./workspaces/composite/composite-workspaces.js";
@@ -691,6 +692,16 @@ export function createMcpServer(
     toolDescriptions,
     resolveExecutionTarget,
     prepareExecutionContext,
+    presentSemanticWorkResult,
+    hostScopeIdFor,
+  });
+
+  registerInspectTools({
+    server,
+    workspaces,
+    resolveExecutionTarget,
+    prepareExecutionContext,
+    isRemote: (workspaceId) => remoteWorkspaces.has(workspaceId),
     presentSemanticWorkResult,
     hostScopeIdFor,
   });

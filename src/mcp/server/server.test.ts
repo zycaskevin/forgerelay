@@ -11,6 +11,7 @@ import "./workspace/worktree-restart.test.js";
 import "./operations/activity-batch.test.js";
 import "./operations/filesystem.test.js";
 import "./operations/filesystem-media.test.js";
+import "../inspect/tools.test.js";
 import "./operations/hooks.test.js";
 import "./transport/http-origin.test.js";
 import "./transport/http-body-limit.test.js";

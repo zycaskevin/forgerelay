@@ -56,6 +56,7 @@ const canonicalToolNames = [
   "edit",
   "rename",
   "delete",
+  "inspect",
   "bash",
 ] as const;
 
