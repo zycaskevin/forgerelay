@@ -88,6 +88,8 @@ test("MCP instructions separate capability contract from configurable workflow p
   } | undefined;
   const activityPanelMeta = activityPanelTool?._meta as {
     ui?: { resourceUri?: string; visibility?: string[] };
+    "openai/outputTemplate"?: string;
+    "openai/widgetAccessible"?: boolean;
   } | undefined;
   const activityPanelInput = activityPanelTool?.inputSchema as {
     required?: string[];
@@ -175,6 +177,8 @@ test("MCP instructions separate capability contract from configurable workflow p
     /^ui:\/\/forgerelay\/activity-panel-app-(?:[0-9a-f]{12}|\d+\.\d+\.\d+)\.html$/,
   );
   assert.deepEqual(activityPanelMeta?.ui?.visibility, ["model", "app"]);
+  assert.equal(activityPanelMeta?.["openai/outputTemplate"], activityPanelMeta?.ui?.resourceUri);
+  assert.equal(activityPanelMeta?.["openai/widgetAccessible"], true);
   assert.deepEqual(activityPanelInput?.required, ["workspaceId"]);
   assert.match(activityPanelInput?.properties?.workspaceId?.description ?? "", /returned by open_workspace/);
   assert.match(activityPanelTool?.description ?? "", /If this Host Turn calls open_workspace, open_workspace must run first/);
@@ -488,11 +492,15 @@ test("review.changes capability owns checkpoints, Hook reports, and review-card 
   assert.equal(tools.tools.some((tool) => tool.name === "show_changes"), false);
   const activityPanelMeta = tools.tools.find((tool) => tool.name === "activity_panel")?._meta as {
     ui?: { resourceUri?: string };
+    "openai/outputTemplate"?: string;
+    "openai/widgetAccessible"?: boolean;
   } | undefined;
   assert.match(
     activityPanelMeta?.ui?.resourceUri ?? "",
     /^ui:\/\/forgerelay\/activity-panel-app-(?:[0-9a-f]{12}|\d+\.\d+\.\d+)\.html$/,
   );
+  assert.equal(activityPanelMeta?.["openai/outputTemplate"], activityPanelMeta?.ui?.resourceUri);
+  assert.equal(activityPanelMeta?.["openai/widgetAccessible"], true);
 });
 
 test("artifact.download capability preserves native-file transport without a dedicated tool alias", async (t) => {
