@@ -8,6 +8,10 @@ esac
 
 STAMP="$(date +%Y%m%d-%H%M%S)"
 OUT="${TMPDIR:-/tmp}/forgerelay-retry-${STAMP}"
+PANEL_MODULE="/srv/workspace/.tools/forgerelay/node_modules/@akira-tl/forgerelay/dist/mcp/panel/mcp-app-template.js"
+panel_template_revision="$(
+  node -e "import('$PANEL_MODULE').then(m=>process.stdout.write(String(m.MCP_APP_RESOURCE_TEMPLATE_REVISION ?? 'unknown'))).catch(()=>process.stdout.write('unknown'))" 2>/dev/null || echo unknown
+)"
 mkdir -p "$OUT"
 chmod 700 "$OUT"
 
@@ -22,6 +26,7 @@ redact() {
   echo "window_minutes=$MINUTES"
   echo "hostname=$(hostname)"
   echo "forgerelay_version=$(/srv/workspace/.tools/forgerelay/node_modules/.bin/forgerelay --version 2>/dev/null || echo unknown)"
+  echo "panel_template_revision=$panel_template_revision"
   echo
   systemctl --user show forgerelay.service \
     -p ActiveState -p SubState -p Result -p NRestarts -p ExecMainPID -p ActiveEnterTimestamp 2>&1 || true
@@ -63,25 +68,35 @@ journalctl --since "$MINUTES minutes ago" --no-pager -o short-iso 2>&1 \
 resource_reads=$(grep -c 'resources/read' "$OUT/forgerelay.log" 2>/dev/null || true)
 asset_fetches=$(grep -c 'mcp-app-assets' "$OUT/forgerelay.log" 2>/dev/null || true)
 http_failures=$(grep -Ec 'http .* /mcp -> (408|429|5[0-9][0-9])' "$OUT/forgerelay.log" 2>/dev/null || true)
-service_restarts=$(grep -Ec 'Starting forgerelay|Stopped forgerelay|Main process exited|Failed with result' "$OUT/forgerelay.log" 2>/dev/null || true)
+service_failures=$(grep -Ec 'Main process exited|Failed with result|state is already in use|Scheduled restart job' "$OUT/forgerelay.log" 2>/dev/null || true)
 
 classification="inconclusive"
-if [ "$service_restarts" -gt 0 ]; then
+inline_bootstrap=0
+case "$panel_template_revision" in
+  ''|*[!0-9]*) ;;
+  *) [ "$panel_template_revision" -ge 7 ] && inline_bootstrap=1 ;;
+esac
+
+if [ "$service_failures" -gt 0 ]; then
   classification="forgerelay-runtime-instability"
-elif [ "$resource_reads" -gt 0 ] && [ "$asset_fetches" -eq 0 ]; then
-  classification="host-renderer-before-asset-fetch"
-elif [ "$resource_reads" -gt 0 ] && [ "$asset_fetches" -gt 0 ] && [ "$http_failures" -eq 0 ]; then
-  classification="host-renderer-after-asset-fetch-or-ui-layer"
 elif [ "$http_failures" -gt 0 ]; then
   classification="mcp-transport-or-resource-http-failure"
+elif [ "$resource_reads" -gt 0 ] && [ "$inline_bootstrap" -eq 1 ]; then
+  classification="mcp-app-template-read-ok-inline-bootstrap"
+elif [ "$resource_reads" -gt 0 ] && [ "$asset_fetches" -eq 0 ]; then
+  classification="host-renderer-before-asset-fetch"
+elif [ "$resource_reads" -gt 0 ] && [ "$asset_fetches" -gt 0 ]; then
+  classification="host-renderer-after-asset-fetch-or-ui-layer"
 fi
 
 {
   echo "classification=$classification"
+  echo "panel_template_revision=$panel_template_revision"
+  echo "inline_bootstrap=$inline_bootstrap"
   echo "resources_read_count=$resource_reads"
   echo "asset_fetch_count=$asset_fetches"
   echo "mcp_http_failure_count=$http_failures"
-  echo "service_restart_signal_count=$service_restarts"
+  echo "service_failure_signal_count=$service_failures"
 } > "$OUT/diagnosis.txt"
 
 tar -C "$(dirname "$OUT")" -czf "${OUT}.tar.gz" "$(basename "$OUT")"
